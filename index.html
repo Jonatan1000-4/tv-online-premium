@@ -2,90 +2,428 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8">
-  <title>Reproductor TV Externo</title>
+  <title>TV Online Premium VIP</title>
+  <!-- Firebase + HLS -->
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-database-compat.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+
+  <link href="https://fonts.googleapis.com/css2?family=Titillium+Web:wght@400;600&display=swap" rel="stylesheet">
   <style>
-    body {
-      margin: 0;
-      background: #000;
-      color: #fff;
-      font-family: Arial, sans-serif;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      height: 100vh;
+    * { margin:0; padding:0; box-sizing:border-box; font-family:'Titillium Web',sans-serif; }
+    body,html { background:#000; color:#e0c97a; overflow-x:hidden; }
+    .hidden { display:none!important; }
+
+    /* LOGIN */
+    #loginContainer { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:#000; z-index:1000; }
+    #authBox { background:#111; padding:20px; border-radius:8px; width:320px; text-align:center; }
+    #authBox input, #authBox button { width:100%; padding:10px; margin:8px 0; border-radius:4px; border:none; }
+    #authBox input { background:#222; color:#e0c97a; }
+    #authBox button { background:#333; color:#e0c97a; cursor:pointer; font-weight:bold; }
+    #authError { color:#f55; min-height:1.2rem; font-size:.9rem; }
+
+    /* HEADER */
+    header { position:relative; background:#000; padding:1rem; text-align:center; font-size:1.8rem; color:#e0c97a; border-bottom:2px solid #e0c97a; }
+    #profileInfo { position:absolute; top:10px; right:10px; text-align:right; font-size:.9rem; }
+    #profileInfo button { background:#333; color:#e0c97a; border:none; padding:4px 8px; cursor:pointer; border-radius:4px; font-size:.8rem; }
+
+    /* SEARCH & STATUS */
+    #searchInput { display:block; width:90%; max-width:500px; margin:15px auto; padding:10px; background:#111; color:#e0c97a; border:1px solid #444; border-radius:5px; transition: box-shadow .3s; }
+    #searchInput:focus { outline:none; box-shadow:0 0 8px #e0c97a; }
+    .status-bar { text-align:center; margin:10px 0; font-size:1.1rem; color:#0f0; display:flex; align-items:center; justify-content:center; }
+    .dot { width:10px; height:10px; border-radius:50%; background:#0f0; display:inline-block; margin-right:8px; }
+
+    /* CHANNELS */
+    .category { margin:20px; }
+    .category h2 { color:#e0c97a; font-size:1.3rem; border-bottom:2px solid #e0c97a; padding-bottom:4px; margin-bottom:10px; }
+    .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:12px; }
+    .channel-tile { position:relative; background:#111; padding:10px; border-radius:8px; cursor:pointer; transition:transform .2s, box-shadow .3s; }
+    .channel-tile:hover { transform:scale(1.03); box-shadow:0 0 8px rgba(224,201,122,0.4); }
+    .channel-tile img { width:100%; height:80px; object-fit:contain; border-radius:4px; background:#000; }
+    .channel-tile span { display:block; color:#e0c97a; margin-top:6px; font-size:.95rem; text-align:center; }
+    .channel-status { position:absolute; top:8px; right:8px; width:10px; height:10px; background:#0f0; border-radius:50%; box-shadow:0 0 4px #0f0; }
+
+    /* PLAYER + ANIMATIONS */
+    #playerModal.hidden { display:none; }
+    #playerModal { position:fixed; inset:0; background:rgba(0,0,0,0.95); display:flex; align-items:center; justify-content:center; z-index:999; animation: fadeIn .3s; }
+    @keyframes fadeIn { from{ opacity:0 } to{ opacity:1 } }
+    #videoPlayer { width:100%; height:100%; object-fit:inherit; }
+
+    #logoAnim {
+      position:absolute; top:50%; left:50%; transform:translate(-50%,-50%) scale(0.5);
+      max-width:40%; max-height:40%; opacity:0; animation: logoShow 5s forwards; z-index:1100;
     }
-    h1 {
-      color: #00baff;
-      font-size: 1.8rem;
-      margin-bottom: 20px;
+    @keyframes logoShow {
+      0% { opacity:0; transform:translate(-50%,-50%) scale(0.5); filter:brightness(0.5); }
+      10% { opacity:1; transform:translate(-50%,-50%) scale(1); filter:brightness(1.5); }
+      80% { opacity:1; transform:translate(-50%,-50%) scale(1); }
+      100% { opacity:0; transform:translate(-50%,-50%) scale(1.2); }
     }
-    video {
-      width: 90vw;
-      max-width: 800px;
-      height: auto;
-      background: #000;
-      border: 3px solid #00baff;
-      border-radius: 10px;
+
+    #loadAlert {
+      position:absolute; top:50%; left:50%;
+      transform:translate(-50%,-50%);
+      background:rgba(0,0,0,0.8);
+      padding:20px; border-radius:8px;
+      color:#e0c97a; font-size:1.1rem;
+      text-align:center; display:none;
+      z-index:1100;
+      max-width:80%;
+      line-height:1.4;
     }
-    #message {
-      margin-top: 20px;
-      color: #f00;
+
+    /* CONTROL BUTTONS */
+    #closeBtn, #guideToggleBtn, #settingsBtn {
+      position:absolute; width:36px; height:36px; background:#333; color:#e0c97a; border:none; border-radius:50%;
+      cursor:pointer; font-size:18px; display:flex; align-items:center; justify-content:center; z-index:1000;
+      transition:background .3s;
     }
-    #openBtn {
-      margin-top: 15px;
-      padding: 10px 20px;
-      background: #00baff;
-      color: white;
-      border: none;
-      border-radius: 5px;
-      cursor: pointer;
-      font-size: 1rem;
+    #closeBtn:hover, #guideToggleBtn:hover, #settingsBtn:hover { background:#554400; }
+    #closeBtn { top:15px; right:15px; }
+    #guideToggleBtn { top:15px; left:15px; animation:pulse 2s infinite; }
+    @keyframes pulse { 0%,100%{ transform:scale(1) } 50%{ transform:scale(1.1) } }
+    #settingsBtn { top:15px; right:60px; }
+    #settingsPanel {
+      position:absolute; top:60px; right:60px; background:#111; padding:10px; border-radius:8px;
+      display:none; color:#e0c97a; font-size:.9rem; z-index:1000;
     }
+    #settingsPanel label, select { display:block; margin-bottom:6px; }
+    #settingsPanel select {
+      width:100%; padding:5px; background:#222; color:#e0c97a;
+      border:1px solid #444; border-radius:4px;
+    }
+
+    /* GUIDE */
+    #channelGuide {
+      position:absolute; top:0; left:0; width:0; height:100%;
+      background:rgba(0,0,0,0.9); overflow-y:auto; transition:width .3s;
+      pointer-events:none; z-index:900;
+    }
+    #channelGuide.open { width:260px; pointer-events:auto; padding:10px; }
+    #channelGuide::-webkit-scrollbar { display:none; }
+    #channelGuide h3 { text-align:center; margin-bottom:10px; color:#e0c97a; }
+    .channel-item {
+      background:#111; padding:8px; margin-bottom:6px; border-radius:6px;
+      cursor:pointer; transition:background .2s; color:#e0c97a;
+    }
+    .channel-item:hover { background:#222; }
   </style>
 </head>
 <body>
-  <h1>▶️ Reproductor TV Alternativo</h1>
-  <video id="video" controls autoplay></video>
-  <div id="message"></div>
-  <button id="openBtn" style="display:none;">Abrir canal en nueva ventana</button>
+  <!-- LOGIN -->
+  <div id="loginContainer">
+    <div id="authBox">
+      <h2>🔐 TV Online Premium VIP</h2>
+      <input type="email" id="email" placeholder="Email"><br>
+      <input type="password" id="password" placeholder="Contraseña"><br>
+      <button id="btnLogin">Entrar</button>
+      <p id="authError"></p>
+    </div>
+  </div>
+
+  <!-- APP CONTENT -->
+  <div id="appContent" class="hidden">
+    <header>📺 TV Online Premium VIP
+      <div id="profileInfo">
+        <span id="headerEmail"></span><br>
+        <span id="daysLeft"></span> días · <span id="sessionCount">0</span> sesiones<br>
+        <button id="btnLogout">Cerrar sesión</button>
+      </div>
+    </header>
+    <p style="text-align:center; margin:10px;">Bienvenido <strong><span id="userEmail"></span></strong></p>
+    <input id="searchInput" placeholder="Buscar canal..." />
+    <div class="status-bar"><span class="dot"></span><span id="channelCount">0</span> canales</div>
+    <div id="categoriesContainer"></div>
+  </div>
+
+  <!-- PLAYER MODAL -->
+  <div id="playerModal" class="hidden">
+    <video id="videoPlayer" controls autoplay></video>
+    <img id="logoAnim" class="hidden" src="" alt="Logo Canal">
+    <div id="loadAlert">🕐 Aguarde... El canal está teniendo inconvenientes al cargar. Si no reproduce en un minuto, revise su conexión.</div>
+    <button id="closeBtn">✕</button>
+    <button id="guideToggleBtn">≡</button>
+    <button id="settingsBtn">⚙️</button>
+    <div id="settingsPanel">
+      <label for="fitMode">Modo Video:</label>
+      <select id="fitMode">
+        <option value="fill">Rellenar</option>
+        <option value="contain">Ajustar</option>
+        <option value="cover">Expandir</option>
+        <option value="none">Original</option>
+      </select>
+    </div>
+    <div id="channelGuide"><h3>Guía</h3><div id="channelList"></div></div>
+  </div>
 
   <script>
-    const video = document.getElementById('video');
-    const message = document.getElementById('message');
-    const openBtn = document.getElementById('openBtn');
+    console.clear();
+    // Firebase
+    const cfg = {
+      apiKey: "AIzaSyB6qVlJqW8TFMYe1VdX22sXSeQwPipIOn0",
+      authDomain: "mitvapp-36398.firebaseapp.com",
+      projectId: "mitvapp-36398",
+      databaseURL: "https://mitvapp-36398-default-rtdb.firebaseio.com",
+      storageBucket: "mitvapp-36398.appspot.com",
+      messagingSenderId: "1016687297681",
+      appId: "1:1016687297681:web:3f141344951779226d6b30"
+    };
+    firebase.initializeApp(cfg);
+    const auth = firebase.auth(), db = firebase.firestore(), rtdb = firebase.database();
 
-    // Pega aquí el canal que querés probar
-    const streamUrl = "http://redworld.pro:8880/live/Jonatan12/uwZEYrEuejWv/384320.m3u8";
-
-    function tryPlayback() {
-      if (Hls.isSupported()) {
-        const hls = new Hls();
-        hls.loadSource(streamUrl);
-        hls.attachMedia(video);
-        hls.on(Hls.Events.ERROR, function (event, data) {
-          console.warn("HLS.js error:", data);
-          fallback();
-        });
-      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-        video.src = streamUrl;
-        video.addEventListener('error', fallback);
-      } else {
-        fallback();
-      }
-    }
-
-    function fallback() {
-      message.textContent = "⚠️ Este canal no puede reproducirse directamente aquí. Podés intentar abrirlo en una nueva ventana.";
-      openBtn.style.display = 'inline-block';
-    }
-
-    openBtn.onclick = () => {
-      window.open(streamUrl, '_blank');
+    const refs = {
+      loginC: document.getElementById('loginContainer'),
+      appC: document.getElementById('appContent'),
+      btnLogin: document.getElementById('btnLogin'),
+      btnLogout: document.getElementById('btnLogout'),
+      ai: document.getElementById('authError'),
+      ei: document.getElementById('email'),
+      pi: document.getElementById('password'),
+      headerEmail: document.getElementById('headerEmail'),
+      daysLeft: document.getElementById('daysLeft'),
+      sessionCountEl: document.getElementById('sessionCount'),
+      uemail: document.getElementById('userEmail'),
+      sc: document.getElementById('searchInput'),
+      cat: document.getElementById('categoriesContainer'),
+      cc: document.getElementById('channelCount'),
+      pmod: document.getElementById('playerModal'),
+      vp: document.getElementById('videoPlayer'),
+      logoAnim: document.getElementById('logoAnim'),
+      loadAlert: document.getElementById('loadAlert'),
+      closeBtn: document.getElementById('closeBtn'),
+      guideBtn: document.getElementById('guideToggleBtn'),
+      settBtn: document.getElementById('settingsBtn'),
+      settPanel: document.getElementById('settingsPanel'),
+      fitm: document.getElementById('fitMode'),
+      cguide: document.getElementById('channelGuide'),
+      clist: document.getElementById('channelList')
     };
 
-    tryPlayback();
+    let channels = [],
+        hlsInstance = null,
+        logoTimer = null,
+        alertTimer = null;
+
+    // Login flow
+    refs.btnLogin.onclick = () => {
+      refs.ai.textContent = '';
+      auth.signInWithEmailAndPassword(refs.ei.value, refs.pi.value)
+        .catch(() => refs.ai.textContent = 'Email o contraseña inválidos');
+    };
+
+    auth.onAuthStateChanged(u => {
+      if (u) {
+        db.collection('users').doc(u.uid).get().then(doc => {
+          if (!doc.exists || !doc.data().expiry) {
+            const exp = new Date(Date.now() + 30*24*60*60*1000);
+            return db.collection('users').doc(u.uid).set({
+              email: u.email,
+              expiry: firebase.firestore.Timestamp.fromDate(exp)
+            }).then(() => ({ email: u.email, expiry: exp }));
+          }
+          return { email: u.email, expiry: doc.data().expiry.toDate() };
+        }).then(obj => {
+          const now = new Date();
+          if (now <= obj.expiry) {
+            refs.loginC.classList.add('hidden');
+            refs.appC.classList.remove('hidden');
+            refs.headerEmail.textContent = obj.email;
+            refs.daysLeft.textContent = Math.ceil((obj.expiry - now)/(24*3600*1000));
+            refs.uemail.textContent = obj.email;
+            setupPresence(u.uid);
+            fetchChannels();
+          } else {
+            alert('Tu acceso ha expirado.');
+            auth.signOut();
+          }
+        }).catch(() => {
+          refs.ai.textContent = 'Error perfil.';
+          auth.signOut();
+        });
+      } else {
+        refs.appC.classList.add('hidden');
+        refs.loginC.classList.remove('hidden');
+      }
+    });
+
+    refs.btnLogout.onclick = () => auth.signOut();
+
+    function setupPresence(uid) {
+      const sid = Date.now() + '_' + Math.random().toString(36).slice(2);
+      const r = rtdb.ref(`presence/${uid}/${sid}`);
+      r.set(true);
+      r.onDisconnect().remove();
+      rtdb.ref(`presence/${uid}`).on('value', snap => {
+        refs.sessionCountEl.textContent = snap.numChildren();
+      });
+    }
+
+    // Channel load
+    function fetchChannels() {
+      fetch('https://mi-app-rv2.vercel.app/canales.m3u')
+        .then(r => r.text()).then(parseM3U);
+    }
+
+    function parseM3U(txt) {
+      channels = [];
+      let name, grp, logo, url;
+      txt.split('\n').forEach(L => {
+        if (L.startsWith('#EXTINF')) {
+          name = (L.match(/,(.*)/) || ['','Sin nombre'])[1].trim();
+          grp = (L.match(/group-title="(.*?)"/) || ['','Otros'])[1];
+          logo = (L.match(/tvg-logo="(.*?)"/) || ['',''])[1];
+        } else if (L && !L.startsWith('#') && !/\.(mp4|mkv|mp3|jpg|png|webm)$/i.test(L)) {
+          url = L.trim();
+          let num = '000', nm = name;
+          const sp = name.split('|');
+          if (sp.length === 2 && !isNaN(sp[0].trim())) {
+            num = sp[0].trim();
+            nm = sp[1].trim();
+          }
+          channels.push({ num, nm, grp, logo, url });
+        }
+      });
+      renderChannels();
+      refs.cc.textContent = channels.length;
+    }
+
+    function renderChannels(list = channels) {
+      refs.cat.innerHTML = '';
+      const grpmap = {};
+      list.forEach(c => (grpmap[c.grp] ||=[]).push(c));
+      Object.keys(grpmap).forEach(grp => {
+        const sec = document.createElement('div'),
+              h2 = document.createElement('h2'),
+              grid = document.createElement('div');
+        sec.className = 'category';
+        h2.textContent = grp;
+        grid.className = 'grid';
+        grpmap[grp].forEach(c => {
+          const t = document.createElement('div'),
+                img = document.createElement('img'),
+                sp = document.createElement('span'),
+                d = document.createElement('div');
+          t.className = 'channel-tile';
+          t.onclick = () => openChannel(c);
+          img.src = c.logo || '';
+          img.onerror = () => img.src = '';
+          sp.textContent = `${c.num} - ${c.nm}`;
+          d.className = 'channel-status';
+          t.append(d, img, sp);
+          grid.append(t);
+        });
+        sec.append(h2, grid);
+        refs.cat.append(sec);
+      });
+    }
+
+    refs.sc.oninput = () => {
+      const f = refs.sc.value.toLowerCase();
+      renderChannels(channels.filter(c =>
+        c.nm.toLowerCase().includes(f) ||
+        c.grp.toLowerCase().includes(f) ||
+        c.num.includes(f)
+      ));
+    };
+
+    function openChannel(c) {
+      clearTimeout(logoTimer);
+      clearTimeout(alertTimer);
+      if (hlsInstance) {
+        hlsInstance.destroy();
+        hlsInstance = null;
+      }
+
+      refs.vp.pause();
+      refs.vp.removeAttribute('src');
+      refs.loadAlert.style.display = 'none';
+
+      refs.logoAnim.src = c.logo || '';
+      refs.logoAnim.classList.remove('hidden');
+      void refs.logoAnim.offsetWidth;
+      refs.pmod.classList.remove('hidden');
+      refs.vp.style.objectFit = refs.fitm.value;
+
+      logoTimer = setTimeout(() => {
+        refs.logoAnim.classList.add('hidden');
+        refs.loadAlert.style.display = 'block';
+      }, 15000);
+
+      if (Hls.isSupported() && c.url.endsWith('.m3u8')) {
+        hlsInstance = new Hls();
+        hlsInstance.loadSource(c.url);
+        hlsInstance.attachMedia(refs.vp);
+        hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => startVideo());
+      } else {
+        refs.vp.src = c.url;
+        startVideo();
+      }
+
+      populateGuide();
+    }
+
+    function startVideo() {
+      refs.vp.play().then(() => {
+        clearTimeout(logoTimer);
+        clearTimeout(alertTimer);
+        refs.logoAnim.classList.add('hidden');
+        refs.loadAlert.style.display = 'none';
+      }).catch(() => {});
+
+      alertTimer = setTimeout(() => {
+        refs.loadAlert.style.display = 'block';
+      }, 60000);
+    }
+
+    refs.closeBtn.onclick = () => {
+      refs.vp.pause();
+      refs.vp.removeAttribute('src');
+      refs.pmod.classList.add('hidden');
+      refs.logoAnim.classList.add('hidden');
+      refs.loadAlert.style.display = 'none';
+      clearTimeout(logoTimer);
+      clearTimeout(alertTimer);
+      if (hlsInstance) {
+        hlsInstance.destroy();
+        hlsInstance = null;
+      }
+    };
+
+    refs.guideBtn.onclick = () => {
+      if (!refs.cguide.classList.contains('open')) {
+        populateGuide();
+      }
+      refs.cguide.classList.toggle('open');
+    };
+
+    refs.settBtn.onclick = () => {
+      refs.settPanel.style.display = (refs.settPanel.style.display === 'block') ? 'none' : 'block';
+    };
+
+    refs.fitm.onchange = () => {
+      refs.vp.style.objectFit = refs.fitm.value;
+    };
+
+    function populateGuide() {
+      refs.clist.innerHTML = '';
+      const grpmap = {};
+      channels.forEach(c => (grpmap[c.grp] ||=[]).push(c));
+      Object.keys(grpmap).forEach(grp => {
+        const h4 = document.createElement('h4');
+        h4.textContent = grp;
+        refs.clist.append(h4);
+        grpmap[grp].forEach(c => {
+          const itm = document.createElement('div');
+          itm.className = 'channel-item';
+          itm.textContent = `${c.num} - ${c.nm}`;
+          itm.onclick = () => openChannel(c);
+          refs.clist.append(itm);
+        });
+      });
+    }
+
   </script>
 </body>
 </html>
